@@ -1,0 +1,81 @@
+version: '3.8'
+
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n_howden
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=admin123
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5678/
+      - GENERIC_TIMEZONE=America/Mexico_City
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/custom-nodes:/home/node/.n8n/custom
+    depends_on:
+      - postgres
+      - neo4j
+    networks:
+      - howden_network
+
+  postgres:
+    image: postgres:15
+    container_name: postgres_howden
+    environment:
+      - POSTGRES_DB=howden_rag
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - howden_network
+
+  neo4j:
+    image: neo4j:latest
+    container_name: neo4j_howden
+    environment:
+      - NEO4J_AUTH=neo4j/Jhonatanr1209
+      - NEO4J_PLUGINS=["apoc"]
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+    networks:
+      - howden_network
+
+  agentic-rag:
+    build: 
+      context: ./agentic-rag-knowledge-graph
+      dockerfile: Dockerfile
+    container_name: agentic_rag_howden
+    ports:
+      - "8058:8058"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/howden_rag
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=Jhonatanr1209
+      - OPENAI_API_KEY=[YOUR_OPENAI_API_KEY]
+    depends_on:
+      - postgres
+      - neo4j
+    networks:
+      - howden_network
+
+volumes:
+  n8n_data:
+  postgres_data:
+  neo4j_data:
+
+networks:
+  howden_network:
+    driver: bridge

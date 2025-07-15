@@ -1,0 +1,260 @@
+{
+  "name": "Howden Conciliation - Simple HTTP",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "conciliation",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-start",
+      "name": "Webhook Start",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "howden-conciliation-simple"
+    },
+    {
+      "parameters": {
+        "url": "http://agentic-rag:8058/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"message\": \"Analiza los siguientes archivos para el proceso de conciliación: {{ JSON.stringify($json.files) }}\",\n  \"session_id\": \"{{ $json.sessionId || 'default' }}\"\n}",
+        "options": {}
+      },
+      "id": "file-analysis",
+      "name": "File Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://agentic-rag:8058/search/vector",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"query\": \"{{ $json.response || 'documento conciliacion' }}\",\n  \"limit\": 5\n}",
+        "options": {}
+      },
+      "id": "extract-entities",
+      "name": "Extract Entities",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://agentic-rag:8058/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"message\": \"Identifica fechas en el contenido para consultar servicios SIGO y ACTUS: {{ JSON.stringify($json.results) }}\",\n  \"session_id\": \"{{ $('Webhook Start').first().json.sessionId || 'default' }}\"\n}",
+        "options": {}
+      },
+      "id": "identify-dates",
+      "name": "Identify Dates",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://enginia.grupordas.com.mx/CoreAdmon/AdmonSigo/api/v1/datos/ObtenerRemanentes",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"sUsuario\": \"RocketCode\",\n  \"sPassword\": \"R0ck3tC083\",\n  \"sToken\": \"TWV4aWNhbm9zIGFsIGdyaXRvIGRlIGd1ZXJyYSBlbiBkZXNhcnJvbGxv\",\n  \"sDescCortoAse\": \"GNP\",\n  \"sAñoDevengoIni\": 2024,\n  \"sMesDevengoIni\": \"01\",\n  \"sAñoDevengoFin\": 2024,\n  \"sMesDevengoFin\": \"12\"\n}",
+        "options": {}
+      },
+      "id": "fetch-sigo-data",
+      "name": "Fetch SIGO Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1120, 200]
+    },
+    {
+      "parameters": {
+        "url": "https://hmexportalapi.howdengroup.com/api/extras/comisionesDevengadasPendientes/GNP/2024-01-01/2024-12-31",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "options": {}
+      },
+      "id": "fetch-actus-data",
+      "name": "Fetch ACTUS Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "url": "http://agentic-rag:8058/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"message\": \"Realiza conciliación inteligente entre los datos de archivos y los servicios externos. Archivos: {{ JSON.stringify($('Extract Entities').first().json) }}, SIGO: {{ JSON.stringify($('Fetch SIGO Data').first().json) }}, ACTUS: {{ JSON.stringify($('Fetch ACTUS Data').first().json) }}\",\n  \"session_id\": \"{{ $('Webhook Start').first().json.sessionId || 'default' }}\"\n}",
+        "options": {}
+      },
+      "id": "conciliation-process",
+      "name": "Conciliation Process",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://agentic-rag:8058/search/graph",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"query\": \"conciliación resultados análisis {{ $json.response }}\",\n  \"limit\": 10\n}",
+        "options": {}
+      },
+      "id": "analyze-results",
+      "name": "Analyze Results",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://agentic-rag:8058/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"message\": \"Genera un informe detallado de conciliación con explicaciones de IA, estadísticas y recomendaciones basado en: {{ JSON.stringify($json.results) }}\",\n  \"session_id\": \"{{ $('Webhook Start').first().json.sessionId || 'default' }}\"\n}",
+        "options": {}
+      },
+      "id": "generate-report",
+      "name": "Generate Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"success\": true,\n  \"report\": {{ JSON.stringify($json.response) }},\n  \"sessionId\": \"{{ $('Webhook Start').first().json.sessionId || 'default' }}\",\n  \"timestamp\": \"{{ new Date().toISOString() }}\"\n}",
+        "options": {}
+      },
+      "id": "response-node",
+      "name": "Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2000, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Start": {
+      "main": [
+        [
+          {
+            "node": "File Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "File Analysis": {
+      "main": [
+        [
+          {
+            "node": "Extract Entities",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Entities": {
+      "main": [
+        [
+          {
+            "node": "Identify Dates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Identify Dates": {
+      "main": [
+        [
+          {
+            "node": "Fetch SIGO Data",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch ACTUS Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch SIGO Data": {
+      "main": [
+        [
+          {
+            "node": "Conciliation Process",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch ACTUS Data": {
+      "main": [
+        [
+          {
+            "node": "Conciliation Process",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conciliation Process": {
+      "main": [
+        [
+          {
+            "node": "Analyze Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Results": {
+      "main": [
+        [
+          {
+            "node": "Generate Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Report": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2025-01-14T13:00:00.000Z",
+      "updatedAt": "2025-01-14T13:00:00.000Z",
+      "id": "howden-conciliation-simple",
+      "name": "Howden Conciliation Simple"
+    }
+  ]
+}
