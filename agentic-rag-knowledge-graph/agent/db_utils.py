@@ -302,7 +302,7 @@ async def get_document(document_id: str) -> Optional[Dict[str, Any]]:
 
 
 async def list_documents(
-    limit: int = 100,
+    limit: int = 1000,
     offset: int = 0,
     metadata_filter: Optional[Dict[str, Any]] = None
 ) -> List[Dict[str, Any]]:
@@ -368,7 +368,7 @@ async def list_documents(
 # Vector Search Functions
 async def vector_search(
     embedding: List[float],
-    limit: int = 10
+    limit: int = 100
 ) -> List[Dict[str, Any]]:
     """
     Perform vector similarity search.
@@ -408,7 +408,7 @@ async def vector_search(
 async def hybrid_search(
     embedding: List[float],
     query_text: str,
-    limit: int = 10,
+    limit: int = 100,
     text_weight: float = 0.3
 ) -> List[Dict[str, Any]]:
     """

@@ -40,6 +40,10 @@ class ChunkingConfig:
     min_chunk_size: int = 100
     use_semantic_splitting: bool = True
     preserve_structure: bool = True
+    # Format-specific chunking settings
+    excel_rows_per_chunk: int = 10
+    pdf_pages_per_chunk: int = 2
+    image_ocr_chunk_size: int = 500
     
     def __post_init__(self):
         """Validate configuration."""
@@ -64,6 +68,229 @@ class DocumentChunk:
         if self.token_count is None:
             # Rough estimation: ~4 characters per token
             self.token_count = len(self.content) // 4
+
+
+class AdaptiveChunker:
+    """Adaptive document chunker that selects strategy based on document type."""
+    
+    def __init__(self, config: ChunkingConfig):
+        """
+        Initialize chunker.
+        
+        Args:
+            config: Chunking configuration
+        """
+        self.config = config
+        self.client = embedding_client
+        self.model = ingestion_model
+        
+        # Initialize specialized chunkers
+        self.semantic_chunker = SemanticChunker(config)
+        self.simple_chunker = SimpleChunker(config)
+    
+    async def chunk_document(
+        self,
+        content: str,
+        title: str,
+        source: str,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> List[DocumentChunk]:
+        """
+        Chunk a document using adaptive strategy based on document type.
+        
+        Args:
+            content: Document content
+            title: Document title
+            source: Document source
+            metadata: Additional metadata
+        
+        Returns:
+            List of document chunks
+        """
+        if not content.strip():
+            return []
+        
+        # Detect document type from metadata or source
+        file_type = self._detect_document_type(source, metadata)
+        
+        # Apply format-specific chunking strategy
+        if file_type == 'excel':
+            return await self._chunk_excel(content, title, source, metadata)
+        elif file_type == 'pdf':
+            return await self._chunk_pdf(content, title, source, metadata)
+        elif file_type == 'word':
+            return await self._chunk_word(content, title, source, metadata)
+        elif file_type == 'image':
+            return await self._chunk_image(content, title, source, metadata)
+        else:
+            # Default to semantic chunking for markdown/text
+            return await self.semantic_chunker.chunk_document(content, title, source, metadata)
+    
+    def _detect_document_type(self, source: str, metadata: Optional[Dict[str, Any]]) -> str:
+        """Detect document type from source and metadata."""
+        if metadata and 'original_file_type' in metadata:
+            file_ext = metadata['original_file_type'].lower()
+        else:
+            file_ext = os.path.splitext(source)[1].lower()
+        
+        if file_ext in ['.xlsx', '.xls']:
+            return 'excel'
+        elif file_ext == '.pdf':
+            return 'pdf'
+        elif file_ext in ['.docx', '.doc']:
+            return 'word'
+        elif file_ext in ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.gif']:
+            return 'image'
+        else:
+            return 'text'
+    
+    async def _chunk_excel(self, content: str, title: str, source: str, metadata: Optional[Dict[str, Any]]) -> List[DocumentChunk]:
+        """Chunk Excel content by table rows."""
+        base_metadata = {
+            "title": title,
+            "source": source,
+            "chunk_method": "excel_rows",
+            **(metadata or {})
+        }
+        
+        # Split content by table rows (Excel converted to markdown tables)
+        chunks = []
+        current_chunk = ""
+        current_row_count = 0
+        
+        lines = content.split('\n')
+        
+        for line in lines:
+            # Check if this is a table row (starts with |)
+            if line.strip().startswith('|') and '|' in line.strip()[1:]:
+                # This is a table row
+                if current_row_count >= self.config.excel_rows_per_chunk:
+                    # Save current chunk and start new one
+                    if current_chunk.strip():
+                        chunks.append(current_chunk.strip())
+                    current_chunk = line
+                    current_row_count = 1
+                else:
+                    current_chunk += '\n' + line if current_chunk else line
+                    current_row_count += 1
+            else:
+                # Non-table content (headers, sheet names, etc.)
+                current_chunk += '\n' + line if current_chunk else line
+        
+        # Add the last chunk
+        if current_chunk.strip():
+            chunks.append(current_chunk.strip())
+        
+        # Create DocumentChunk objects
+        return self._create_chunk_objects(chunks, content, base_metadata)
+    
+    async def _chunk_pdf(self, content: str, title: str, source: str, metadata: Optional[Dict[str, Any]]) -> List[DocumentChunk]:
+        """Chunk PDF content by pages."""
+        base_metadata = {
+            "title": title,
+            "source": source,
+            "chunk_method": "pdf_pages",
+            **(metadata or {})
+        }
+        
+        # Split by page markers (assuming PDF processor adds page markers)
+        page_pattern = r'## Page \d+'
+        pages = re.split(page_pattern, content)
+        
+        chunks = []
+        current_chunk = ""
+        page_count = 0
+        
+        for page in pages:
+            if not page.strip():
+                continue
+                
+            if page_count >= self.config.pdf_pages_per_chunk:
+                if current_chunk.strip():
+                    chunks.append(current_chunk.strip())
+                current_chunk = page.strip()
+                page_count = 1
+            else:
+                current_chunk += '\n\n' + page.strip() if current_chunk else page.strip()
+                page_count += 1
+        
+        # Add the last chunk
+        if current_chunk.strip():
+            chunks.append(current_chunk.strip())
+        
+        # If no page markers found, fall back to semantic chunking
+        if len(chunks) <= 1 and len(content) > self.config.chunk_size:
+            return await self.semantic_chunker.chunk_document(content, title, source, metadata)
+        
+        return self._create_chunk_objects(chunks, content, base_metadata)
+    
+    async def _chunk_word(self, content: str, title: str, source: str, metadata: Optional[Dict[str, Any]]) -> List[DocumentChunk]:
+        """Chunk Word document content by paragraphs and sections."""
+        base_metadata = {
+            "title": title,
+            "source": source,
+            "chunk_method": "word_sections",
+            **(metadata or {})
+        }
+        
+        # Use semantic chunking for Word documents as they have good structure
+        return await self.semantic_chunker.chunk_document(content, title, source, base_metadata)
+    
+    async def _chunk_image(self, content: str, title: str, source: str, metadata: Optional[Dict[str, Any]]) -> List[DocumentChunk]:
+        """Chunk OCR content from images."""
+        base_metadata = {
+            "title": title,
+            "source": source,
+            "chunk_method": "image_ocr",
+            **(metadata or {})
+        }
+        
+        # For images, use smaller chunks as OCR text can be fragmented
+        config = ChunkingConfig(
+            chunk_size=self.config.image_ocr_chunk_size,
+            chunk_overlap=self.config.chunk_overlap,
+            use_semantic_splitting=False
+        )
+        
+        chunker = SimpleChunker(config)
+        return chunker.chunk_document(content, title, source, base_metadata)
+    
+    def _create_chunk_objects(
+        self,
+        chunks: List[str],
+        original_content: str,
+        base_metadata: Dict[str, Any]
+    ) -> List[DocumentChunk]:
+        """Create DocumentChunk objects from text chunks."""
+        chunk_objects = []
+        current_pos = 0
+        
+        for i, chunk_text in enumerate(chunks):
+            # Find the position of this chunk in the original content
+            start_pos = original_content.find(chunk_text, current_pos)
+            if start_pos == -1:
+                # Fallback: estimate position
+                start_pos = current_pos
+            
+            end_pos = start_pos + len(chunk_text)
+            
+            # Create chunk metadata
+            chunk_metadata = {
+                **base_metadata,
+                "total_chunks": len(chunks)
+            }
+            
+            chunk_objects.append(DocumentChunk(
+                content=chunk_text.strip(),
+                index=i,
+                start_char=start_pos,
+                end_char=end_pos,
+                metadata=chunk_metadata
+            ))
+            
+            current_pos = end_pos
+        
+        return chunk_objects
 
 
 class SemanticChunker:
@@ -460,10 +687,8 @@ def create_chunker(config: ChunkingConfig):
     Returns:
         Chunker instance
     """
-    if config.use_semantic_splitting:
-        return SemanticChunker(config)
-    else:
-        return SimpleChunker(config)
+    # Always use AdaptiveChunker as it handles all document types intelligently
+    return AdaptiveChunker(config)
 
 
 # Example usage

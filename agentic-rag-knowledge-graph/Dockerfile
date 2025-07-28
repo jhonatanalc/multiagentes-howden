@@ -6,6 +6,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
+    postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Copiar requirements
@@ -16,6 +17,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copiar código fuente
 COPY . .
+
+# El schema se inicializa automáticamente via docker-entrypoint-initdb.d
 
 # Exponer puerto
 EXPOSE 8058

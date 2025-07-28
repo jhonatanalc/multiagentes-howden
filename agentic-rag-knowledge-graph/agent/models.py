@@ -210,6 +210,10 @@ class IngestionConfig(BaseModel):
     extract_entities: bool = True
     # New option for faster ingestion
     skip_graph_building: bool = Field(default=False, description="Skip knowledge graph building for faster ingestion")
+    # Format-specific chunking settings
+    excel_rows_per_chunk: int = Field(default=10, ge=1, le=500, description="Number of Excel rows per chunk")
+    pdf_pages_per_chunk: int = Field(default=2, ge=1, le=10, description="Number of PDF pages per chunk")
+    image_ocr_chunk_size: int = Field(default=500, ge=100, le=2000, description="Chunk size for OCR text from images")
     
     @field_validator('chunk_overlap')
     @classmethod

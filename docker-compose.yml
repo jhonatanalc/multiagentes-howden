@@ -25,16 +25,23 @@ services:
       - howden_network
 
   postgres:
-    image: postgres:15
+    image: pgvector/pgvector:pg15
     container_name: postgres_howden
     environment:
       - POSTGRES_DB=howden_rag
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./agentic-rag-knowledge-graph/sql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d howden_rag"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     networks:
       - howden_network
 
@@ -66,8 +73,10 @@ services:
       - NEO4J_PASSWORD=Jhonatanr1209
       - OPENAI_API_KEY=[YOUR_OPENAI_API_KEY]
     depends_on:
-      - postgres
-      - neo4j
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_started
     networks:
       - howden_network
 
