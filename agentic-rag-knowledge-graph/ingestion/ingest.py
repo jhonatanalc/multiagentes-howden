@@ -66,7 +66,10 @@ class DocumentIngestionPipeline:
             chunk_size=config.chunk_size,
             chunk_overlap=config.chunk_overlap,
             max_chunk_size=config.max_chunk_size,
-            use_semantic_splitting=config.use_semantic_chunking
+            use_semantic_splitting=config.use_semantic_chunking,
+            excel_rows_per_chunk=config.excel_rows_per_chunk,
+            pdf_pages_per_chunk=config.pdf_pages_per_chunk,
+            image_ocr_chunk_size=config.image_ocr_chunk_size
         )
         
         self.chunker = create_chunker(self.chunker_config)
@@ -496,6 +499,66 @@ async def main():
         raise
     finally:
         await pipeline.close()
+
+
+async def get_document_count() -> int:
+    """Get the total number of documents in the database."""
+    try:
+        async with db_pool.acquire() as conn:
+            result = await conn.fetchval("SELECT COUNT(*) FROM documents")
+            return result
+    except Exception as e:
+        logger.error(f"Failed to get document count: {e}")
+        return 0
+
+
+async def get_chunk_count() -> int:
+    """Get the total number of chunks in the database."""
+    try:
+        async with db_pool.acquire() as conn:
+            result = await conn.fetchval("SELECT COUNT(*) FROM chunks")
+            return result
+    except Exception as e:
+        logger.error(f"Failed to get chunk count: {e}")
+        return 0
+
+
+async def ingest_document(file_path: str) -> IngestionResult:
+    """Ingest a single document file."""
+    try:
+        # Initialize databases if not already done
+        if not db_pool:
+            await initialize_database()
+        
+        # Create default config
+        config = IngestionConfig()
+        
+        # Create pipeline
+        pipeline = DocumentIngestionPipeline(
+            config=config,
+            documents_folder="",  # Not used for single file
+            clean_before_ingest=False
+        )
+        
+        # Initialize pipeline
+        await pipeline.initialize()
+        
+        # Process single document
+        result = await pipeline._ingest_single_document(file_path)
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Failed to ingest document {file_path}: {e}")
+        return IngestionResult(
+            document_id="",
+            title=os.path.basename(file_path),
+            chunks_created=0,
+            entities_extracted=0,
+            relationships_created=0,
+            processing_time_ms=0,
+            errors=[str(e)]
+        )
 
 
 if __name__ == "__main__":

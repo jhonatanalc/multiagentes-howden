@@ -11,7 +11,7 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 import uuid
 
-from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi import FastAPI, HTTPException, Request, Depends, File, UploadFile
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -621,6 +621,210 @@ async def list_documents_endpoint(
         
     except Exception as e:
         logger.error(f"Document listing failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/documents/status")
+async def get_documents_status():
+    """Get documents ingestion status."""
+    try:
+        from ingestion.ingest import get_document_count, get_chunk_count
+        
+        # Get counts from database
+        doc_count = await get_document_count()
+        chunk_count = await get_chunk_count()
+        
+        return {
+            "documents_processed": doc_count,
+            "chunks_created": chunk_count,
+            "status": "ready" if doc_count > 0 else "no_documents",
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Status check failed: {e}")
+        return {
+            "documents_processed": 0,
+            "chunks_created": 0,
+            "status": "error",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@app.post("/documents/process-existing")
+async def process_existing_documents(
+    excel_rows_per_chunk: int = 10,
+    pdf_pages_per_chunk: int = 2,
+    chunk_size: int = 1000,
+    clean_existing: bool = False
+):
+    """Process all documents in the Documents directory with configurable chunking."""
+    try:
+        import os
+        import asyncio
+        from ingestion.ingest import DocumentIngestionPipeline
+        from agent.models import IngestionConfig
+        
+        # Path to documents directory
+        docs_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "Documents")
+        
+        if not os.path.exists(docs_dir):
+            raise HTTPException(status_code=404, detail=f"Documents directory not found: {docs_dir}")
+        
+        # Get all supported files
+        from ingestion.document_processor import create_document_processor
+        processor = create_document_processor()
+        
+        all_files = os.listdir(docs_dir)
+        supported_files = [f for f in all_files if processor.is_supported(os.path.join(docs_dir, f))]
+        
+        if not supported_files:
+            return {
+                "message": f"No supported files found in documents directory. Found {len(all_files)} total files",
+                "processed": 0,
+                "errors": [],
+                "directory_path": docs_dir
+            }
+        
+        # Create ingestion configuration with custom parameters
+        config = IngestionConfig(
+            chunk_size=chunk_size,
+            excel_rows_per_chunk=excel_rows_per_chunk,
+            pdf_pages_per_chunk=pdf_pages_per_chunk,
+            use_semantic_chunking=True,
+            extract_entities=True,
+            skip_graph_building=False
+        )
+        
+        # Create pipeline
+        pipeline = DocumentIngestionPipeline(
+            config=config,
+            documents_folder=docs_dir,
+            clean_before_ingest=clean_existing
+        )
+        
+        try:
+            # Initialize pipeline
+            await pipeline.initialize()
+            
+            # Process documents
+            results = await pipeline.ingest_documents()
+            
+            # Prepare response
+            processed = len([r for r in results if not r.errors])
+            total_chunks = sum(r.chunks_created for r in results)
+            total_errors = [error for r in results for error in r.errors]
+            
+            # Group files by type for reporting
+            file_types = {}
+            for filename in supported_files:
+                ext = os.path.splitext(filename)[1].lower()
+                file_types[ext] = file_types.get(ext, 0) + 1
+            
+            return {
+                "message": f"Processing completed with adaptive chunking. {processed} documents processed successfully.",
+                "processed": processed,
+                "total_files": len(supported_files),
+                "total_chunks": total_chunks,
+                "file_types": file_types,
+                "chunking_config": {
+                    "excel_rows_per_chunk": excel_rows_per_chunk,
+                    "pdf_pages_per_chunk": pdf_pages_per_chunk,
+                    "chunk_size": chunk_size
+                },
+                "errors": total_errors,
+                "results": [
+                    {
+                        "title": r.title,
+                        "chunks_created": r.chunks_created,
+                        "processing_time_ms": r.processing_time_ms,
+                        "has_errors": bool(r.errors)
+                    }
+                    for r in results
+                ],
+                "timestamp": datetime.now().isoformat()
+            }
+        
+        finally:
+            # Clean up pipeline
+            await pipeline.close()
+        
+    except Exception as e:
+        logger.error(f"Document processing failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/documents/upload")
+async def upload_document(file: UploadFile = File(...)):
+    """Upload and process a single document."""
+    try:
+        import tempfile
+        import os
+        from ingestion.ingest import ingest_document
+        
+        # Read file content
+        content = await file.read()
+        filename = file.filename or "uploaded_document.md"
+        
+        # Create temporary file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False) as temp_file:
+            temp_file.write(content.decode('utf-8'))
+            temp_path = temp_file.name
+        
+        try:
+            # Process the document
+            result = await ingest_document(temp_path)
+            
+            # Clean up temp file
+            os.unlink(temp_path)
+            
+            if hasattr(result, 'errors') and result.errors:
+                return {
+                    "message": "Document processed with errors",
+                    "filename": filename,
+                    "errors": result.errors,
+                    "timestamp": datetime.now().isoformat()
+                }
+            else:
+                return {
+                    "message": "Document processed successfully",
+                    "filename": filename,
+                    "timestamp": datetime.now().isoformat()
+                }
+                
+        except Exception as e:
+            # Clean up temp file on error
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+            raise e
+        
+    except Exception as e:
+        logger.error(f"Document upload failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/extract")
+async def extract_query(query: str):
+    """Extract/query endpoint for simple queries."""
+    try:
+        # Create a simple chat request
+        chat_request = ChatRequest(message=query)
+        
+        # Get agent dependencies
+        agent_deps = AgentDependencies()
+        
+        # Run the agent
+        result = await rag_agent.run(chat_request.message, deps=agent_deps)
+        
+        return {
+            "query": query,
+            "response": result.data,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Extract query failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -47,7 +47,7 @@ class AgentDependencies:
             self.search_preferences = {
                 "use_vector": True,
                 "use_graph": True,
-                "default_limit": 10
+                "default_limit": 100
             }
 
 
@@ -64,7 +64,7 @@ rag_agent = Agent(
 async def vector_search(
     ctx: RunContext[AgentDependencies],
     query: str,
-    limit: int = 10
+    limit: int = 100
 ) -> List[Dict[str, Any]]:
     """
     Search for relevant information using semantic similarity.
@@ -139,7 +139,7 @@ async def graph_search(
 async def hybrid_search(
     ctx: RunContext[AgentDependencies],
     query: str,
-    limit: int = 10,
+    limit: int = 100,
     text_weight: float = 0.3
 ) -> List[Dict[str, Any]]:
     """

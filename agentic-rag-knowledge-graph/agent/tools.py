@@ -61,7 +61,7 @@ async def generate_embedding(text: str) -> List[float]:
 class VectorSearchInput(BaseModel):
     """Input for vector search tool."""
     query: str = Field(..., description="Search query")
-    limit: int = Field(default=10, description="Maximum number of results")
+    limit: int = Field(default=100, description="Maximum number of results")
 
 
 class GraphSearchInput(BaseModel):
@@ -72,7 +72,7 @@ class GraphSearchInput(BaseModel):
 class HybridSearchInput(BaseModel):
     """Input for hybrid search tool."""
     query: str = Field(..., description="Search query")
-    limit: int = Field(default=10, description="Maximum number of results")
+    limit: int = Field(default=100, description="Maximum number of results")
     text_weight: float = Field(default=0.3, description="Weight for text similarity (0-1)")
 
 
