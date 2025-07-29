@@ -761,15 +761,42 @@ async def upload_document(file: UploadFile = File(...)):
     try:
         import tempfile
         import os
+        from pathlib import Path
         from ingestion.ingest import ingest_document
+        from ingestion.document_processor import create_document_processor
         
         # Read file content
         content = await file.read()
-        filename = file.filename or "uploaded_document.md"
+        filename = file.filename or "uploaded_document"
         
-        # Create temporary file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False) as temp_file:
-            temp_file.write(content.decode('utf-8'))
+        # Get file extension from filename
+        file_path = Path(filename)
+        file_extension = file_path.suffix.lower()
+        
+        # Validate file type
+        processor = create_document_processor()
+        if not processor.is_supported(filename):
+            supported_extensions = ', '.join(sorted(processor.supported_extensions))
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Unsupported file type '{file_extension}'. Supported formats: {supported_extensions}"
+            )
+        
+        # Create temporary file with correct extension
+        with tempfile.NamedTemporaryFile(suffix=file_extension, delete=False) as temp_file:
+            # Handle text files (need UTF-8 decoding)
+            if file_extension in {'.md', '.markdown', '.txt'}:
+                try:
+                    temp_file.write(content.decode('utf-8').encode('utf-8'))
+                except UnicodeDecodeError:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Text file '{filename}' is not valid UTF-8 encoded"
+                    )
+            else:
+                # Handle binary files (PDFs, Word, Excel, images)
+                temp_file.write(content)
+            
             temp_path = temp_file.name
         
         try:
@@ -784,12 +811,18 @@ async def upload_document(file: UploadFile = File(...)):
                     "message": "Document processed with errors",
                     "filename": filename,
                     "errors": result.errors,
+                    "chunks_created": result.chunks_created,
+                    "entities_extracted": result.entities_extracted,
+                    "processing_time_ms": result.processing_time_ms,
                     "timestamp": datetime.now().isoformat()
                 }
             else:
                 return {
                     "message": "Document processed successfully",
                     "filename": filename,
+                    "chunks_created": result.chunks_created,
+                    "entities_extracted": result.entities_extracted,
+                    "processing_time_ms": result.processing_time_ms,
                     "timestamp": datetime.now().isoformat()
                 }
                 
@@ -799,6 +832,9 @@ async def upload_document(file: UploadFile = File(...)):
                 os.unlink(temp_path)
             raise e
         
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
     except Exception as e:
         logger.error(f"Document upload failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
